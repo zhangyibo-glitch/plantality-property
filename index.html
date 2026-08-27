@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>植物人格图像生成器</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="title-block">
+        <span class="eyebrow">BOTANICAL PORTRAIT STUDIO</span>
+        <h1>植物人格图像生成器 <span>桌面版</span></h1>
+      </div>
+      <div class="topbar-actions">
+        <span class="local-badge"><i></i>照片仅在本机处理</span>
+        <button class="button ghost" type="button" id="resetButton">重置</button>
+        <button class="button primary" type="button" id="exportButton">生成并导出 PNG</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="panel input-panel">
+        <div class="panel-heading">
+          <span class="step">01</span>
+          <div>
+            <h2>植物照片</h2>
+            <p>上传真实植物照片，选择背景处理方式。</p>
+          </div>
+        </div>
+
+        <label class="dropzone" id="dropzone" for="photoInput">
+          <input id="photoInput" type="file" accept="image/png,image/jpeg,image/webp" />
+          <span class="upload-mark">＋</span>
+          <strong id="dropzoneTitle">拖放照片到这里</strong>
+          <span id="dropzoneMeta">或点击选择 PNG、JPG、WebP</span>
+        </label>
+
+        <div class="field-group compact">
+          <span class="field-label">背景处理</span>
+          <div class="segmented" role="group" aria-label="背景处理">
+            <button class="segment active" data-mode="cutout" type="button">AI 自动抠图</button>
+            <button class="segment" data-mode="original" type="button">保留原图</button>
+          </div>
+          <p class="field-hint" id="cutoutHint">首次使用会下载本地抠图模型；照片本身不会上传。</p>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="panel-heading scores-heading">
+          <span class="step">02</span>
+          <div>
+            <h2>HEXACO 数值</h2>
+            <p>范围 1.00–7.00，支持键盘直接输入。</p>
+          </div>
+        </div>
+
+        <div class="score-list">
+          <label class="score-row"><span><b>H</b>诚实—谦逊</span><input data-score="h" type="number" min="1" max="7" step="0.01" value="6.42" /></label>
+          <label class="score-row"><span><b>E</b>情绪性</span><input data-score="e" type="number" min="1" max="7" step="0.01" value="3.38" /></label>
+          <label class="score-row"><span><b>X</b>外向性</span><input data-score="x" type="number" min="1" max="7" step="0.01" value="5.41" /></label>
+          <label class="score-row"><span><b>A</b>宜人性</span><input data-score="a" type="number" min="1" max="7" step="0.01" value="5.79" /></label>
+          <label class="score-row"><span><b>C</b>尽责性</span><input data-score="c" type="number" min="1" max="7" step="0.01" value="5.74" /></label>
+          <label class="score-row"><span><b>O</b>开放性</span><input data-score="o" type="number" min="1" max="7" step="0.01" value="5.36" /></label>
+        </div>
+      </aside>
+
+      <section class="stage-panel">
+        <div class="stage-toolbar">
+          <div>
+            <span class="stage-title">实时预览</span>
+            <span class="stage-meta">正方形 · 2048 × 2048 px</span>
+          </div>
+          <div class="view-actions">
+            <button class="icon-button active" type="button" title="适合窗口">FIT</button>
+            <button class="icon-button" type="button" title="100% 查看">100%</button>
+          </div>
+        </div>
+
+        <div class="canvas-well">
+          <div class="artboard" id="artboard">
+            <img id="referencePreview" src="assets/rosemary-reference.jpg" alt="植物人格画像参考预览" />
+            <canvas id="renderCanvas" width="1280" height="1280" aria-label="生成的植物人格画像"></canvas>
+            <div class="processing-overlay" id="processingOverlay">
+              <span></span>
+              <b id="processingTitle">正在建立植物轮廓…</b>
+              <small id="processingDetail">准备本地处理</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage-footer">
+          <span id="stageStatus">参考样式预览 · 等待上传照片</span>
+          <span>缩放 54%</span>
+        </div>
+      </section>
+
+      <aside class="panel treatment-panel">
+        <div class="panel-heading">
+          <span class="step">03</span>
+          <div>
+            <h2>融合方式</h2>
+            <p>调整主体透明度与晕色重叠程度。</p>
+          </div>
+        </div>
+
+        <div class="control-block">
+          <div class="control-label"><span>植物主体透明度</span><output id="subjectOpacityValue">36%</output></div>
+          <input id="subjectOpacity" type="range" min="12" max="72" value="36" />
+          <div class="range-labels"><span>轻</span><span>实</span></div>
+        </div>
+
+        <div class="control-block">
+          <div class="control-label"><span>晕色重叠</span><output id="bloomOverlapValue">68%</output></div>
+          <input id="bloomOverlap" type="range" min="20" max="95" value="68" />
+          <div class="range-labels"><span>分离</span><span>融合</span></div>
+        </div>
+
+        <div class="control-block">
+          <div class="control-label"><span>点染密度</span><output id="stippleDensityValue">58%</output></div>
+          <input id="stippleDensity" type="range" min="20" max="90" value="58" />
+          <div class="range-labels"><span>疏</span><span>密</span></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="field-group">
+          <span class="field-label">渲染预设</span>
+          <div class="preset-grid">
+            <button class="preset active" data-preset="mist" type="button"><i class="swatch mist"></i><span><b>柔雾</b><small>低对比柔化</small></span></button>
+            <button class="preset" data-preset="pollen" type="button"><i class="swatch pollen"></i><span><b>花粉点染</b><small>颗粒更明显</small></span></button>
+            <button class="preset" data-preset="specimen" type="button"><i class="swatch specimen"></i><span><b>植物标本</b><small>轮廓更清晰</small></span></button>
+          </div>
+        </div>
+
+        <div class="field-group color-group">
+          <div class="control-label"><span>主题色</span><span class="auto-pill">自动提取</span></div>
+          <div class="palette-row">
+            <button class="color-chip active" style="--chip:#6651a3" aria-label="紫色"></button>
+            <button class="color-chip" style="--chip:#668a3b" aria-label="绿色"></button>
+            <button class="color-chip" style="--chip:#bb4030" aria-label="红色"></button>
+            <button class="color-chip" style="--chip:#3e6685" aria-label="蓝色"></button>
+            <button class="eyedropper" id="eyedropperButton" type="button">取色</button>
+            <input id="customColor" type="color" value="#6651a3" aria-label="自定义主题色" />
+          </div>
+        </div>
+
+        <div class="assumption-note">
+          <span>处理逻辑</span>
+          <p>自动抠图作为默认模式；图像主体与晕色分别生成，再在植物轮廓附近叠加。</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
+
