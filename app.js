@@ -280,7 +280,7 @@ async function aiCutout(file, processToken) {
     progress: (key, current, total) => {
       if (processToken !== state.lastProcessToken) return;
       const percent = total ? Math.round(current / total * 100) : 0;
-      dom.processingDetail.textContent = percent > 0 ? `首次模型下载 ${percent}% · 后续会使用缓存` : '正在准备本地模型…';
+      dom.processingDetail.textContent = percent > 0 ? `첫 모델 다운로드 ${percent}% · 이후에는 캐시를 사용합니다` : '로컬 모델을 준비하는 중…';
     }
   });
 }
@@ -328,10 +328,10 @@ async function processPhoto(file = state.sourceFile) {
   if (!file) return;
   const processToken = ++state.lastProcessToken;
   state.sourceFile = file;
-  setProcessing(true, state.mode === 'cutout' ? '正在建立植物轮廓…' : '正在柔化原始照片…', '读取照片');
-  setStatus(`处理中 · ${file.name}`);
+  setProcessing(true, state.mode === 'cutout' ? '식물 윤곽을 만드는 중…' : '원본 사진을 부드럽게 처리하는 중…', '사진 불러오는 중');
+  setStatus(`처리 중 · ${file.name}`);
   dom.dropzoneTitle.textContent = file.name;
-  dom.dropzoneMeta.textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB · 点击可更换照片`;
+  dom.dropzoneMeta.textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB · 클릭하여 사진 변경`;
 
   try {
     const sourceImage = await fileToImage(file);
@@ -342,12 +342,12 @@ async function processPhoto(file = state.sourceFile) {
       let resultBlob;
       let usedFallback = false;
       try {
-        dom.processingDetail.textContent = '正在载入本地 AI 抠图模型…';
+        dom.processingDetail.textContent = '로컬 AI 배경 제거 모델을 불러오는 중…';
         resultBlob = await aiCutout(file, processToken);
       } catch (error) {
         console.warn('AI cutout unavailable; using local edge fallback.', error);
         usedFallback = true;
-        dom.processingDetail.textContent = 'AI 模型暂不可用，正在使用本地边缘抠图…';
+        dom.processingDetail.textContent = 'AI 모델을 사용할 수 없어 로컬 윤곽 감지로 전환하는 중…';
         resultBlob = await classicCutout(sourceImage);
       }
       if (processToken !== state.lastProcessToken) return;
@@ -355,11 +355,11 @@ async function processPhoto(file = state.sourceFile) {
       try { state.processedImage = await loadImage(resultUrl); }
       finally { URL.revokeObjectURL(resultUrl); }
       state.bounds = getCropBounds(state.processedImage);
-      setStatus(usedFallback ? '已使用本地边缘抠图 · 可继续微调并导出' : 'AI 抠图完成 · 照片未离开本机');
+      setStatus(usedFallback ? '로컬 윤곽 감지 완료 · 세부 조정 후 내보낼 수 있습니다' : 'AI 배경 제거 완료 · 사진은 컴퓨터 밖으로 전송되지 않았습니다');
     } else {
       state.processedImage = sourceImage;
       state.bounds = { x: 0, y: 0, width: sourceImage.naturalWidth, height: sourceImage.naturalHeight };
-      setStatus('已保留原图并进行柔化处理');
+      setStatus('원본 배경을 유지하고 부드럽게 처리했습니다');
     }
 
     if (state.autoTheme) setTheme(extractTheme(state.processedImage), true);
@@ -369,7 +369,7 @@ async function processPhoto(file = state.sourceFile) {
     renderComposite(dom.canvas, 1280);
   } catch (error) {
     console.error(error);
-    setStatus('照片处理失败 · 请换一张 PNG、JPG 或 WebP 重试');
+    setStatus('사진 처리 실패 · 다른 PNG, JPG 또는 WebP 파일로 다시 시도하세요');
   } finally {
     if (processToken === state.lastProcessToken) setProcessing(false);
   }
@@ -614,10 +614,10 @@ document.querySelectorAll('.segment').forEach((button) => {
     state.mode = button.dataset.mode;
     const cutout = state.mode === 'cutout';
     dom.cutoutHint.textContent = cutout
-      ? '首次使用会下载本地抠图模型；照片本身不会上传。'
-      : '保留照片背景，并对整张照片进行柔化与低透明度处理。';
+      ? '처음 사용할 때 로컬 배경 제거 모델을 다운로드합니다. 사진은 업로드되지 않습니다.'
+      : '사진 배경을 유지한 채 전체 사진에 부드러운 저투명도 효과를 적용합니다.';
     if (state.sourceFile) await processPhoto();
-    else setStatus(cutout ? 'AI 自动抠图模式 · 等待上传照片' : '保留原图模式 · 等待上传照片');
+    else setStatus(cutout ? 'AI 자동 배경 제거 모드 · 사진 업로드 대기 중' : '원본 유지 모드 · 사진 업로드 대기 중');
   });
 });
 
@@ -638,7 +638,7 @@ document.querySelectorAll('.preset').forEach((button) => {
       document.querySelector(`#${id}Value`).value = `${value}%`;
       state[key] = value / 100;
     });
-    setStatus(`${button.querySelector('b').textContent}预设 · 已重新渲染`);
+    setStatus(`${button.querySelector('b').textContent} 프리셋 · 다시 렌더링했습니다`);
     requestRender();
   });
 });
@@ -651,7 +651,7 @@ document.querySelector('#eyedropperButton').addEventListener('click', () => dom.
 dom.customColor.addEventListener('input', () => setTheme(dom.customColor.value, false));
 
 async function loadPhoto(file) {
-  if (!file || !file.type.startsWith('image/')) { setStatus('请选择 PNG、JPG 或 WebP 图片'); return; }
+  if (!file || !file.type.startsWith('image/')) { setStatus('PNG, JPG 또는 WebP 이미지를 선택하세요'); return; }
   await processPhoto(file);
 }
 
@@ -678,15 +678,15 @@ document.querySelector('#resetButton').addEventListener('click', () => {
   document.querySelectorAll('.preset').forEach((item) => item.classList.toggle('active', item.dataset.preset === 'mist'));
   if (state.sourceImage) {
     setTheme(extractTheme(state.processedImage || state.sourceImage), true);
-    requestRender(); setStatus('参数已恢复默认值');
+    requestRender(); setStatus('설정을 기본값으로 복원했습니다');
   } else {
-    setTheme('#6651a3', true); setStatus('参考样式预览 · 等待上传照片');
+    setTheme('#6651a3', true); setStatus('참고 스타일 미리보기 · 사진 업로드 대기 중');
   }
 });
 
 dom.exportButton.addEventListener('click', async () => {
   if (!state.processedImage || state.processing) return;
-  setStatus('正在生成 2048 × 2048 高清 PNG…');
+  setStatus('2048 × 2048 고해상도 PNG를 생성하는 중…');
   dom.exportButton.disabled = true;
   await new Promise((resolve) => setTimeout(resolve, 40));
   const exportCanvas = document.createElement('canvas');
@@ -699,7 +699,7 @@ dom.exportButton.addEventListener('click', async () => {
     link.href = url;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setStatus('高清 PNG 已导出');
+    setStatus('고해상도 PNG 내보내기 완료');
     dom.exportButton.disabled = false;
   }, 'image/png');
 });

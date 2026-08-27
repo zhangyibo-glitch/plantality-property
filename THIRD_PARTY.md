@@ -1,10 +1,10 @@
-# 第三方组件
+# 서드파티 구성 요소
 
-自动抠图功能按需加载 `@imgly/background-removal` 1.7.0，在浏览器本地运行。
+자동 배경 제거 기능은 필요할 때 `@imgly/background-removal` 1.7.0을 불러와 브라우저에서 로컬로 실행합니다.
 
-- 项目：https://github.com/imgly/background-removal-js
-- 许可证：AGPL-3.0；如用于商业闭源发布，请向 IMG.LY 确认合适的商业许可。
-- 模型与 WebAssembly 文件首次使用时从 IMG.LY 的默认静态资源地址下载并缓存。
+- 프로젝트: https://github.com/imgly/background-removal-js
+- 라이선스: AGPL-3.0. 상업용 비공개 배포에는 IMG.LY를 통해 적절한 상업용 라이선스를 확인하세요.
+- 모델과 WebAssembly 파일은 처음 사용할 때 IMG.LY의 기본 정적 리소스 주소에서 다운로드되어 캐시됩니다.
 
-当该组件不可用时，应用会自动使用内置的无依赖边缘抠图算法。
+이 구성 요소를 사용할 수 없으면 앱은 별도 의존성이 없는 내장 윤곽 감지 알고리즘으로 자동 전환합니다.
 
