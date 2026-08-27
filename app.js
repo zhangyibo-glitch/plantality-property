@@ -1,43 +1,69 @@
 const IMG_LY_ESM = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm';
 
+// 내보내기 한 변 길이. 여백이 생긴 만큼 키워 그림 자체의 해상도를 유지한다.
+const EXPORT_SIZE = 2560;
+
 const defaults = {
   h: 6.42, e: 3.38, x: 5.41, a: 5.79, c: 5.74, o: 5.36,
-  subjectOpacity: 36, bloomOverlap: 68, stippleDensity: 58
+  outerScale: 82, originalOpacity: 35, stippleDensity: 58, bloomSpread: 68, bloomSoftness: 45,
+  innerOpacity: 45, innerScale: 50, innerFilterAmount: 60,
+  radarScale: 100, radarWidth: 100, radarFill: 10,
+  canvasMargin: 10
 };
+
+// 퍼센트 단위 슬라이더 id ↔ state 키 (모두 state에는 /100 값으로 저장)
+const sliderKeys = ['outerScale', 'originalOpacity', 'stippleDensity', 'bloomSpread', 'bloomSoftness', 'innerOpacity', 'innerScale', 'innerFilterAmount', 'radarScale', 'radarWidth', 'radarFill', 'canvasMargin'];
 
 const traits = [
-  { key: 'h', name: 'Honesty–Humility', facet: '(Fairness/Sincerity)', high: 'sincere', low: 'deceitful' },
-  { key: 'e', name: 'Emotionality', facet: '(Dependence)', high: 'dependent', low: 'independent' },
-  { key: 'x', name: 'eXtraversion', facet: '(Social Boldness)', high: 'proactive', low: 'reserved' },
-  { key: 'a', name: 'Agreeableness', facet: '(Flexibility)', high: 'accommodating', low: 'stubborn' },
-  { key: 'c', name: 'Conscientiousness', facet: '(Organization)', high: 'organized', low: 'disorganized' },
-  { key: 'o', name: 'Openness to Experience', facet: '(Creativity)', high: 'imaginative', low: 'conventional' }
+  { key: 'h', name: 'Honesty–Humility', subscale: 'Fairness/Sincerity', high: 'sincere', low: 'deceitful' },
+  { key: 'e', name: 'Emotionality', subscale: 'Dependence', high: 'dependent', low: 'independent' },
+  { key: 'x', name: 'eXtraversion', subscale: 'Social Boldness', high: 'proactive', low: 'reserved' },
+  { key: 'a', name: 'Agreeableness', subscale: 'Flexibility', high: 'accommodating', low: 'stubborn' },
+  { key: 'c', name: 'Conscientiousness', subscale: 'Organization', high: 'organized', low: 'disorganized' },
+  { key: 'o', name: 'Openness to Experience', subscale: 'Creativity', high: 'imaginative', low: 'conventional' }
 ];
 
+const defaultSubscales = () => Object.fromEntries(traits.map((trait) => [trait.key, { name: trait.subscale, high: trait.high, low: trait.low }]));
+
+const emptySlot = () => ({ file: null, sourceImage: null, image: null, bounds: null, token: 0 });
+
 const state = {
-  sourceFile: null,
-  sourceImage: null,
-  processedImage: null,
-  bounds: null,
+  photos: { outer: emptySlot(), inner: emptySlot() },
   mode: 'cutout',
-  preset: 'mist',
+  outerRotation: 0,
+  innerRotation: 0,
+  innerMonotone: false,
+  innerMonoColor: null, // null이면 테마 색상을 따른다
+  innerFilter: 'none',  // none | stipple | grain
+  radarNumberColor: null, // null이면 테마 색상을 따른다
+  subscales: defaultSubscales(),
   theme: '#6651a3',
   autoTheme: true,
-  subjectOpacity: defaults.subjectOpacity / 100,
-  bloomOverlap: defaults.bloomOverlap / 100,
-  stippleDensity: defaults.stippleDensity / 100,
+  ...Object.fromEntries(sliderKeys.map((key) => [key, defaults[key] / 100])),
   scores: { h: defaults.h, e: defaults.e, x: defaults.x, a: defaults.a, c: defaults.c, o: defaults.o },
-  processing: false,
-  renderQueued: false,
-  lastProcessToken: 0
+  processing: new Set(),
+  renderQueued: false
 };
 
+const outerSlot = () => state.photos.outer.image ? state.photos.outer : state.photos.inner;
+const innerSlot = () => state.photos.inner.image ? state.photos.inner : state.photos.outer;
+const hasImage = () => Boolean(state.photos.outer.image || state.photos.inner.image);
+
 const dom = {
-  dropzone: document.querySelector('#dropzone'),
-  dropzoneTitle: document.querySelector('#dropzoneTitle'),
-  dropzoneMeta: document.querySelector('#dropzoneMeta'),
-  photoInput: document.querySelector('#photoInput'),
-  preview: document.querySelector('#referencePreview'),
+  dropzones: {
+    outer: {
+      zone: document.querySelector('#dropzoneOuter'),
+      title: document.querySelector('#dropzoneOuterTitle'),
+      meta: document.querySelector('#dropzoneOuterMeta'),
+      input: document.querySelector('#photoInputOuter')
+    },
+    inner: {
+      zone: document.querySelector('#dropzoneInner'),
+      title: document.querySelector('#dropzoneInnerTitle'),
+      meta: document.querySelector('#dropzoneInnerMeta'),
+      input: document.querySelector('#photoInputInner')
+    }
+  },
   canvas: document.querySelector('#renderCanvas'),
   overlay: document.querySelector('#processingOverlay'),
   processingTitle: document.querySelector('#processingTitle'),
@@ -47,8 +73,6 @@ const dom = {
   cutoutHint: document.querySelector('#cutoutHint'),
   customColor: document.querySelector('#customColor')
 };
-
-dom.exportButton.disabled = true;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const lerp = (a, b, amount) => a + (b - a) * amount;
@@ -133,12 +157,14 @@ async function fileToImage(file) {
   finally { URL.revokeObjectURL(url); }
 }
 
-function setProcessing(visible, title = '', detail = '') {
-  state.processing = visible;
-  dom.overlay.classList.toggle('visible', visible);
+function setProcessing(slotName, visible, title = '', detail = '') {
+  if (visible) state.processing.add(slotName);
+  else state.processing.delete(slotName);
+  const busy = state.processing.size > 0;
+  dom.overlay.classList.toggle('visible', busy);
   if (title) dom.processingTitle.textContent = title;
   if (detail) dom.processingDetail.textContent = detail;
-  dom.exportButton.disabled = visible || !state.sourceImage;
+  dom.exportButton.disabled = busy;
 }
 
 function setStatus(message) { dom.stageStatus.textContent = message; }
@@ -269,7 +295,7 @@ async function classicCutout(image) {
   return await new Promise((resolve) => output.toBlob(resolve, 'image/png'));
 }
 
-async function aiCutout(file, processToken) {
+async function aiCutout(file, slot, token) {
   const module = await import(IMG_LY_ESM);
   const removeBackground = module.removeBackground || module.imglyRemoveBackground || module.default?.removeBackground || module.default;
   if (typeof removeBackground !== 'function') throw new Error('Background removal module unavailable');
@@ -278,7 +304,7 @@ async function aiCutout(file, processToken) {
     device: 'cpu',
     output: { format: 'image/png', quality: 1, type: 'foreground' },
     progress: (key, current, total) => {
-      if (processToken !== state.lastProcessToken) return;
+      if (token !== slot.token) return;
       const percent = total ? Math.round(current / total * 100) : 0;
       dom.processingDetail.textContent = percent > 0 ? `첫 모델 다운로드 ${percent}% · 이후에는 캐시를 사용합니다` : '로컬 모델을 준비하는 중…';
     }
@@ -324,61 +350,61 @@ function setTheme(hex, isAuto = false) {
   requestRender();
 }
 
-async function processPhoto(file = state.sourceFile) {
+async function processPhoto(slotName, file = null) {
+  const slot = state.photos[slotName];
+  if (!file) file = slot.file;
   if (!file) return;
-  const processToken = ++state.lastProcessToken;
-  state.sourceFile = file;
-  setProcessing(true, state.mode === 'cutout' ? '식물 윤곽을 만드는 중…' : '원본 사진을 부드럽게 처리하는 중…', '사진 불러오는 중');
+  const token = ++slot.token;
+  slot.file = file;
+  const zone = dom.dropzones[slotName];
+  setProcessing(slotName, true, state.mode === 'cutout' ? '식물 윤곽을 만드는 중…' : '원본 사진을 부드럽게 처리하는 중…', '사진 불러오는 중');
   setStatus(`처리 중 · ${file.name}`);
-  dom.dropzoneTitle.textContent = file.name;
-  dom.dropzoneMeta.textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB · 클릭하여 사진 변경`;
+  zone.title.textContent = file.name;
+  zone.meta.textContent = `${(file.size / 1024 / 1024).toFixed(1)} MB · 클릭하여 사진 변경`;
 
   try {
     const sourceImage = await fileToImage(file);
-    if (processToken !== state.lastProcessToken) return;
-    state.sourceImage = sourceImage;
+    if (token !== slot.token) return;
+    slot.sourceImage = sourceImage;
 
     if (state.mode === 'cutout') {
       let resultBlob;
       let usedFallback = false;
       try {
         dom.processingDetail.textContent = '로컬 AI 배경 제거 모델을 불러오는 중…';
-        resultBlob = await aiCutout(file, processToken);
+        resultBlob = await aiCutout(file, slot, token);
       } catch (error) {
         console.warn('AI cutout unavailable; using local edge fallback.', error);
         usedFallback = true;
         dom.processingDetail.textContent = 'AI 모델을 사용할 수 없어 로컬 윤곽 감지로 전환하는 중…';
         resultBlob = await classicCutout(sourceImage);
       }
-      if (processToken !== state.lastProcessToken) return;
+      if (token !== slot.token) return;
       const resultUrl = URL.createObjectURL(resultBlob);
-      try { state.processedImage = await loadImage(resultUrl); }
+      try { slot.image = await loadImage(resultUrl); }
       finally { URL.revokeObjectURL(resultUrl); }
-      state.bounds = getCropBounds(state.processedImage);
+      slot.bounds = getCropBounds(slot.image);
       setStatus(usedFallback ? '로컬 윤곽 감지 완료 · 세부 조정 후 내보낼 수 있습니다' : 'AI 배경 제거 완료 · 사진은 컴퓨터 밖으로 전송되지 않았습니다');
     } else {
-      state.processedImage = sourceImage;
-      state.bounds = { x: 0, y: 0, width: sourceImage.naturalWidth, height: sourceImage.naturalHeight };
+      slot.image = sourceImage;
+      slot.bounds = { x: 0, y: 0, width: sourceImage.naturalWidth, height: sourceImage.naturalHeight };
       setStatus('원본 배경을 유지하고 부드럽게 처리했습니다');
     }
 
-    if (state.autoTheme) setTheme(extractTheme(state.processedImage), true);
-    dom.preview.classList.add('hidden');
-    dom.canvas.classList.add('visible');
-    dom.exportButton.disabled = false;
+    if (state.autoTheme) setTheme(extractTheme(outerSlot().image), true);
     renderComposite(dom.canvas, 1280);
   } catch (error) {
     console.error(error);
     setStatus('사진 처리 실패 · 다른 PNG, JPG 또는 WebP 파일로 다시 시도하세요');
   } finally {
-    if (processToken === state.lastProcessToken) setProcessing(false);
+    if (token === slot.token) setProcessing(slotName, false);
   }
 }
 
-function imageLayout(size) {
-  const bounds = state.bounds || { x: 0, y: 0, width: state.processedImage.naturalWidth, height: state.processedImage.naturalHeight };
-  const maxWidth = size * .82;
-  const maxHeight = size * .82;
+function imageLayout(size, slot, fraction = .82) {
+  const bounds = slot.bounds || { x: 0, y: 0, width: slot.image.naturalWidth, height: slot.image.naturalHeight };
+  const maxWidth = size * fraction;
+  const maxHeight = size * fraction;
   const scale = Math.min(maxWidth / bounds.width, maxHeight / bounds.height);
   const width = bounds.width * scale;
   const height = bounds.height * scale;
@@ -389,19 +415,68 @@ function imageLayout(size) {
   };
 }
 
-function buildMask(size, layout) {
-  const maskSize = 220;
+function buildMask(size, layout, image) {
+  const maskSize = 300;
   const source = document.createElement('canvas');
   source.width = maskSize; source.height = maskSize;
   const context = source.getContext('2d', { willReadFrequently: true });
   const ratio = maskSize / size;
-  context.drawImage(state.processedImage, layout.sx, layout.sy, layout.sw, layout.sh, layout.dx * ratio, layout.dy * ratio, layout.dw * ratio, layout.dh * ratio);
-  const core = context.getImageData(0, 0, maskSize, maskSize).data;
+  context.save();
+  context.translate((layout.dx + layout.dw / 2) * ratio, (layout.dy + layout.dh / 2) * ratio);
+  context.rotate(state.outerRotation * Math.PI / 180);
+  context.drawImage(image, layout.sx, layout.sy, layout.sw, layout.sh, -layout.dw / 2 * ratio, -layout.dh / 2 * ratio, layout.dw * ratio, layout.dh * ratio);
+  context.restore();
+  const imageData = context.getImageData(0, 0, maskSize, maskSize);
+  const core = imageData.data;
+
+  // 이미지에 투명 정보가 사실상 없으면(흰 배경 선화·로고, 원본 유지 모드의 JPG 등)
+  // 밝기를 실루엣으로 사용한다 — 어두운 선·면이 모양이 되고 흰 배경은 비워진다
+  let opaqueCount = 0, filledCount = 0;
+  for (let i = 3; i < core.length; i += 4) {
+    if (core[i] > 8) filledCount += 1;
+    if (core[i] > 250) opaqueCount += 1;
+  }
+  if (filledCount > 0 && opaqueCount / filledCount > .97) {
+    for (let i = 0; i < core.length; i += 4) {
+      if (core[i + 3] < 8) continue; // 레이아웃 바깥 여백은 그대로 둔다
+      const lum = (core[i] * .299 + core[i + 1] * .587 + core[i + 2] * .114) / 255;
+      core[i + 3] = Math.round(clamp((1 - lum) * 1.7 - .08, 0, 1) * 255);
+    }
+  }
+
+  // 닫힌 안쪽 영역 채우기: 마스크 테두리에서 빈 픽셀로 도달할 수 없는 영역은
+  // 실루엣 내부로 간주한다 — 윤곽선만 있는 이미지도 안쪽에는 점이 생기지 않는다
+  {
+    const total = maskSize * maskSize;
+    const outside = new Uint8Array(total);
+    const queue = new Int32Array(total);
+    let head = 0, tail = 0;
+    const push = (index) => {
+      if (!outside[index] && core[index * 4 + 3] < 40) { outside[index] = 1; queue[tail++] = index; }
+    };
+    for (let x = 0; x < maskSize; x += 1) { push(x); push((maskSize - 1) * maskSize + x); }
+    for (let y = 1; y < maskSize - 1; y += 1) { push(y * maskSize); push(y * maskSize + maskSize - 1); }
+    while (head < tail) {
+      const index = queue[head++];
+      const x = index % maskSize, y = Math.floor(index / maskSize);
+      if (x > 0) push(index - 1);
+      if (x < maskSize - 1) push(index + 1);
+      if (y > 0) push(index - maskSize);
+      if (y < maskSize - 1) push(index + maskSize);
+    }
+    for (let index = 0; index < total; index += 1) {
+      if (!outside[index] && core[index * 4 + 3] < 200) core[index * 4 + 3] = 255;
+    }
+  }
+  context.putImageData(imageData, 0, 0);
 
   const blur = document.createElement('canvas');
   blur.width = maskSize; blur.height = maskSize;
   const blurContext = blur.getContext('2d', { willReadFrequently: true });
-  blurContext.filter = `blur(${8 + state.bloomOverlap * 17}px)`;
+  // 번짐 반경은 마스크 크기가 아니라 실루엣 크기에 비례시킨다 —
+  // 마스크 해상도나 무대 크기를 바꿔도 번짐 모양이 그대로 유지된다
+  const shapeOnMask = Math.max(layout.dw, layout.dh) * (maskSize / size);
+  blurContext.filter = `blur(${(.03 + state.bloomSpread * .107) * shapeOnMask}px)`;
   blurContext.globalAlpha = .92;
   blurContext.drawImage(source, 0, 0);
   const halo = blurContext.getImageData(0, 0, maskSize, maskSize).data;
@@ -416,21 +491,25 @@ function maskAlpha(mask, x, y, halo = true) {
 
 function bloomPoints(size, mask) {
   const random = mulberry32(hashState());
-  const presetBoost = state.preset === 'pollen' ? 1.28 : state.preset === 'specimen' ? .78 : 1;
-  const target = Math.round((800 + state.stippleDensity * 2700) * presetBoost * Math.min(1.25, size / 1280));
+  const target = Math.round((1200 + state.stippleDensity * 10000) * Math.min(1.25, size / 1280));
   const points = [];
   let attempts = 0;
-  while (points.length < target && attempts < target * 18) {
+  while (points.length < target && attempts < target * 60) {
     attempts += 1;
     const x = random(), y = random();
     const halo = maskAlpha(mask, x, y, true);
     const core = maskAlpha(mask, x, y, false);
-    const edgeBias = clamp(halo * 1.5 - core * .4, 0, 1);
-    const ambient = .012 + state.bloomOverlap * .018;
+    // 실루엣 경계 바로 바깥(halo는 있는데 core는 없는 띠)에서만 확률이 높다 —
+    // 깊은 안쪽/먼 바깥은 0에 수렴해 점이 가장자리를 따라 몰린다
+    const fringe = clamp(halo - core * .92, 0, 1);
+    const edgeBias = Math.pow(fringe, .75) * 1.4;
+    const ambient = .001; // 실루엣 안쪽·먼 배경에는 점을 거의 뿌리지 않는다
     if (random() > edgeBias + ambient) continue;
-    const baseRadius = state.preset === 'pollen' ? 2.3 : state.preset === 'specimen' ? 1.7 : 3.1;
-    const radius = (baseRadius + random() * (state.preset === 'mist' ? 7.2 : 4.6)) * size / 1280;
-    points.push({ x: x * size, y: y * size, radius, alpha: .025 + random() * .09, core, foreground: random() < state.bloomOverlap * .23 });
+    // 번짐: 낮으면 작고 또렷한 점, 높으면 크고 옅은 점
+    const soft = state.bloomSoftness;
+    const radius = (1.4 + random() * 2.4) * (.6 + soft * 2.8) * size / 1280;
+    const alpha = (.06 + random() * .12) * (1.25 - soft * .55);
+    points.push({ x: x * size, y: y * size, radius, alpha, core, foreground: random() < .18 });
   }
   return points;
 }
@@ -438,12 +517,11 @@ function bloomPoints(size, mask) {
 function drawBloom(context, points, foreground) {
   const secondary = mixColors(state.theme, '#d7d2bd', .32);
   context.save();
-  context.globalCompositeOperation = state.preset === 'specimen' ? 'multiply' : 'source-over';
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index];
     if (point.foreground !== foreground) continue;
     const color = index % 7 === 0 ? secondary : state.theme;
-    const alpha = point.alpha * (foreground ? .7 : 1) * (state.preset === 'mist' ? .72 : 1);
+    const alpha = point.alpha * (foreground ? .7 : 1);
     context.fillStyle = rgba(color, alpha);
     context.beginPath(); context.arc(point.x, point.y, point.radius, 0, Math.PI * 2); context.fill();
   }
@@ -461,15 +539,105 @@ function drawPaper(context, size) {
   context.fillRect(0, 0, size, size);
 }
 
-function drawPlant(context, size, layout) {
-  const presetAlpha = state.preset === 'specimen' ? 1.18 : state.preset === 'mist' ? .9 : 1;
+function plantSourceCanvas(image, layout) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(layout.dw));
+  canvas.height = Math.max(1, Math.round(layout.dh));
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  context.drawImage(image, layout.sx, layout.sy, layout.sw, layout.sh, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+// 명암은 유지하고 색만 지정색으로 바꾼다. 'color' 합성은 알파를 채우므로 원본 알파로 다시 잘라낸다.
+function applyMonotone(canvas, image, layout, hex) {
+  const context = canvas.getContext('2d');
+  context.globalCompositeOperation = 'color';
+  context.fillStyle = hex;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = 'destination-in';
+  context.drawImage(image, layout.sx, layout.sy, layout.sw, layout.sh, 0, 0, canvas.width, canvas.height);
+  context.globalCompositeOperation = 'source-over';
+}
+
+// 거친 입자: 명암에 잡음을 섞고 일부 픽셀을 흩뜨려 사진이 알갱이로 부서지게 한다
+function applyGrain(canvas, amount, random) {
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const strength = amount * 160;
+  const speckle = amount * .5;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index + 3] < 6) continue;
+    const noise = (random() - .5) * strength;
+    pixels[index] = clamp(pixels[index] + noise, 0, 255);
+    pixels[index + 1] = clamp(pixels[index + 1] + noise, 0, 255);
+    pixels[index + 2] = clamp(pixels[index + 2] + noise, 0, 255);
+    if (random() < speckle) pixels[index + 3] = Math.round(pixels[index + 3] * random() * .85);
+  }
+  context.putImageData(imageData, 0, 0);
+}
+
+// 점묘: 사진을 바깥 번짐과 같은 점 어휘(같은 반지름 범위)로 다시 그려 질감을 맞춘다.
+// context는 이미 레이아웃 중심으로 이동·회전된 상태로 들어온다.
+function drawPlantStipple(context, size, layout, image, random, amount, monoHex) {
+  const maxSide = 420;
+  const scale = Math.min(1, maxSide / Math.max(layout.dw, layout.dh));
+  const width = Math.max(1, Math.round(layout.dw * scale));
+  const height = Math.max(1, Math.round(layout.dh * scale));
+  const sampler = document.createElement('canvas');
+  sampler.width = width; sampler.height = height;
+  const samplerContext = sampler.getContext('2d', { willReadFrequently: true });
+  samplerContext.drawImage(image, layout.sx, layout.sy, layout.sw, layout.sh, 0, 0, width, height);
+  const pixels = samplerContext.getImageData(0, 0, width, height).data;
+
+  const area = (layout.dw * layout.dh) / (size * size);
+  const target = Math.round(area * 90000 * amount * Math.min(1.25, size / 1280));
+  const radiusUnit = (.6 + state.bloomSoftness * 2.8) * size / 1280;
+  let placed = 0, attempts = 0;
+  while (placed < target && attempts < target * 25) {
+    attempts += 1;
+    const u = random(), v = random();
+    const offset = (Math.floor(v * height) * width + Math.floor(u * width)) * 4;
+    const alpha = pixels[offset + 3] / 255;
+    if (alpha < .05) continue;
+    const lum = (pixels[offset] * .299 + pixels[offset + 1] * .587 + pixels[offset + 2] * .114) / 255;
+    if (random() > alpha * (.3 + .7 * (1 - lum))) continue;
+    placed += 1;
+    const radius = (1.4 + random() * 2.4) * radiusUnit;
+    const color = monoHex || rgbToHex(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
+    context.fillStyle = rgba(color, .16 + random() * .3);
+    context.beginPath();
+    context.arc(-layout.dw / 2 + u * layout.dw, -layout.dh / 2 + v * layout.dh, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+function drawPlant(context, size, layout, image, opacity, options = {}) {
+  const { rotate = 0, monotone = false, monoColor = null, filter = 'none', filterAmount = .6 } = options;
+  const monoHex = monotone ? (monoColor || state.theme) : null;
+  const random = mulberry32(hashState() ^ 0x5bf03635);
+
   context.save();
-  context.globalAlpha = clamp(state.subjectOpacity * presetAlpha, .08, .82);
+  context.globalAlpha = clamp(opacity, .02, .85);
+  context.translate(layout.dx + layout.dw / 2, layout.dy + layout.dh / 2);
+  if (rotate) context.rotate(rotate * Math.PI / 180);
+
+  if (filter === 'stipple') {
+    drawPlantStipple(context, size, layout, image, random, filterAmount, monoHex);
+    context.restore();
+    return;
+  }
+
   context.globalCompositeOperation = 'multiply';
-  context.filter = state.preset === 'mist'
-    ? `saturate(.72) contrast(.9) blur(${Math.max(.35, size / 3200)}px)`
-    : state.preset === 'specimen' ? 'saturate(.78) contrast(1.06)' : 'saturate(.82) contrast(.96)';
-  context.drawImage(state.processedImage, layout.sx, layout.sy, layout.sw, layout.sh, layout.dx, layout.dy, layout.dw, layout.dh);
+  context.filter = 'saturate(.82) contrast(.96)';
+  let source = image, sx = layout.sx, sy = layout.sy, sw = layout.sw, sh = layout.sh;
+  if (monoHex || filter === 'grain') {
+    const prepared = plantSourceCanvas(image, layout);
+    if (monoHex) applyMonotone(prepared, image, layout, monoHex);
+    if (filter === 'grain') applyGrain(prepared, filterAmount, random);
+    source = prepared; sx = 0; sy = 0; sw = prepared.width; sh = prepared.height;
+  }
+  context.drawImage(source, sx, sy, sw, sh, -layout.dw / 2, -layout.dh / 2, layout.dw, layout.dh);
   context.restore();
 }
 
@@ -500,9 +668,23 @@ function outlinedText(context, text, x, y, fill, font, lineWidth, align = 'cente
 
 function drawRadar(context, size) {
   const scale = size / 1280;
-  const centerX = size * .5, centerY = size * .51, radius = size * .365;
+  const centerX = size * .5, centerY = size * .51, radius = size * .365 * state.radarScale;
   context.save();
   context.lineJoin = 'round';
+
+  // 원형 그리드: 1~7점에 대응하는 동심원 + 바깥 여운 원
+  for (let step = 1; step <= 7; step += 1) {
+    context.beginPath();
+    context.arc(centerX, centerY, radius * step / 7, 0, Math.PI * 2);
+    context.strokeStyle = rgba(state.theme, step === 7 ? .2 : .11);
+    context.lineWidth = 1.2 * scale;
+    context.stroke();
+  }
+  context.beginPath();
+  context.arc(centerX, centerY, radius * 1.13, 0, Math.PI * 2);
+  context.strokeStyle = rgba(state.theme, .16);
+  context.lineWidth = 1.2 * scale;
+  context.stroke();
 
   [3 / 7, 5 / 7, 1].forEach((ratio, ringIndex) => {
     const points = traits.map((_, index) => pointOnAxis(centerX, centerY, radius, index, ratio));
@@ -525,12 +707,12 @@ function drawRadar(context, size) {
 
   const scorePoints = traits.map((trait, index) => pointOnAxis(centerX, centerY, radius, index, clamp(state.scores[trait.key], 1, 7) / 7));
   polygon(context, scorePoints);
-  context.fillStyle = rgba(state.theme, .095); context.fill();
-  context.strokeStyle = state.theme; context.lineWidth = 5.1 * scale; context.stroke();
+  context.fillStyle = rgba(state.theme, state.radarFill); context.fill();
+  context.strokeStyle = state.theme; context.lineWidth = 5.1 * scale * state.radarWidth; context.stroke();
 
   scorePoints.forEach((point, index) => {
     const score = state.scores[traits[index].key];
-    context.beginPath(); context.arc(point.x, point.y, 8 * scale, 0, Math.PI * 2);
+    context.beginPath(); context.arc(point.x, point.y, 8 * scale * (.7 + .3 * state.radarWidth), 0, Math.PI * 2);
     context.fillStyle = score < 4 ? '#46688a' : state.theme; context.fill();
     context.strokeStyle = '#f7f5ee'; context.lineWidth = 4 * scale; context.stroke();
   });
@@ -550,35 +732,73 @@ function drawRadar(context, size) {
     const score = state.scores[trait.key];
     const high = score >= 4;
     const polarityColor = high ? state.theme : '#46688a';
+    const numberColor = state.radarNumberColor || polarityColor;
     const label = labels[index];
-    const x = size * label.x, y = size * label.y;
-    outlinedText(context, score.toFixed(2), x, y, polarityColor, `700 ${45 * scale}px "Segoe UI"`, 7 * scale);
+    // 그래프 크기에 맞춰 라벨도 중심 기준으로 같이 이동
+    const x = size * (.5 + (label.x - .5) * state.radarScale);
+    const y = size * (.51 + (label.y - .51) * state.radarScale);
+    outlinedText(context, score.toFixed(2), x, y, numberColor, `700 ${45 * scale}px "Segoe UI"`, 7 * scale);
     outlinedText(context, trait.name, x, y + 38 * scale, '#22241f', `700 ${21 * scale}px "Segoe UI"`, 5 * scale);
-    outlinedText(context, trait.facet, x, y + 63 * scale, '#565951', `italic ${18 * scale}px "Segoe UI"`, 4 * scale);
-    outlinedText(context, `${high ? '△' : '▽'} ${high ? trait.high : trait.low}`, x, y + 87 * scale, polarityColor, `700 ${20 * scale}px "Segoe UI"`, 5 * scale);
+    // 서브스케일 한 줄 표기: "Dependence: low(independent)" — 전체를 같은 스타일로
+    const sub = state.subscales[trait.key];
+    const subLine = `${sub.name}: ${high ? 'high' : 'low'}(${high ? sub.high : sub.low})`;
+    outlinedText(context, subLine, x, y + 64 * scale, '#565951', `600 ${19 * scale}px "Segoe UI"`, 4 * scale);
   });
   context.restore();
 }
 
 function renderComposite(targetCanvas, size = 1280) {
-  if (!state.processedImage) return;
   targetCanvas.width = size;
   targetCanvas.height = size;
   const context = targetCanvas.getContext('2d');
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   drawPaper(context, size);
-  const layout = imageLayout(size);
-  const mask = buildMask(size, layout);
-  const points = bloomPoints(size, mask);
-  drawBloom(context, points, false);
-  drawPlant(context, size, layout);
-  drawBloom(context, points, true);
-  drawRadar(context, size);
+
+  // 여백: 사진과 그래프는 안쪽 구도(inner)에 맞춰 배치하고,
+  // **번짐 점은 캔버스 전체를 무대로 삼는다** — 점이 여백까지 자연스럽게 흩어져
+  // 정사각형으로 잘린 경계가 생기지 않는다.
+  const margin = clamp(state.canvasMargin, 0, .25);
+  const inner = size * (1 - margin * 2);
+  const offset = size * margin;
+  // 안쪽 구도 기준 레이아웃을 캔버스 좌표로 옮긴다
+  const placed = (slot, fraction) => {
+    const layout = imageLayout(inner, slot, fraction);
+    return { ...layout, dx: layout.dx + offset, dy: layout.dy + offset };
+  };
+
+  if (hasImage()) {
+    const maskSlot = outerSlot();
+    const plantSlot = innerSlot();
+    const maskLayout = placed(maskSlot, state.outerScale);
+    const mask = buildMask(size, maskLayout, maskSlot.image);
+    const points = bloomPoints(size, mask);
+    drawBloom(context, points, false);
+    // 원본(바깥) 이미지는 실루엣과 같은 위치·크기·회전으로 그려 점과 정렬된다. 투명도 0이면 숨김.
+    if (state.originalOpacity > 0) {
+      drawPlant(context, size, maskLayout, maskSlot.image, state.originalOpacity, { rotate: state.outerRotation });
+    }
+    // 안쪽 사진은 별도로 올렸을 때만 중앙에 그린다.
+    if (plantSlot.image && plantSlot !== maskSlot && state.innerOpacity > 0) {
+      drawPlant(context, size, placed(plantSlot, state.innerScale), plantSlot.image, state.innerOpacity, {
+        rotate: state.innerRotation,
+        monotone: state.innerMonotone,
+        monoColor: state.innerMonoColor,
+        filter: state.innerFilter,
+        filterAmount: state.innerFilterAmount
+      });
+    }
+    drawBloom(context, points, true);
+  }
+
+  context.save();
+  context.translate(offset, offset);
+  drawRadar(context, inner);
+  context.restore();
 }
 
 function requestRender() {
-  if (!state.processedImage || state.renderQueued) return;
+  if (state.renderQueued) return;
   state.renderQueued = true;
   requestAnimationFrame(() => { state.renderQueued = false; renderComposite(dom.canvas, 1280); });
 }
@@ -593,9 +813,94 @@ function bindRange(id, stateKey) {
   });
 }
 
-bindRange('subjectOpacity', 'subjectOpacity');
-bindRange('bloomOverlap', 'bloomOverlap');
-bindRange('stippleDensity', 'stippleDensity');
+sliderKeys.forEach((key) => bindRange(key, key));
+
+const bindRotation = (id, stateKey) => {
+  const input = document.querySelector(`#${id}`);
+  input.addEventListener('input', () => {
+    document.querySelector(`#${id}Value`).value = `${input.value}°`;
+    state[stateKey] = Number(input.value);
+    requestRender();
+  });
+};
+bindRotation('outerRotation', 'outerRotation');
+bindRotation('innerRotation', 'innerRotation');
+
+document.querySelectorAll('[data-sub]').forEach((input) => {
+  input.addEventListener('input', () => {
+    state.subscales[input.dataset.sub][input.dataset.field] = input.value.trim();
+    requestRender();
+  });
+});
+
+const radarNumberInput = document.querySelector('#radarNumberColor');
+document.querySelectorAll('.segment[data-numcolor]').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.segment[data-numcolor]').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    if (button.dataset.numcolor === 'theme') {
+      state.radarNumberColor = null;
+      requestRender();
+    } else {
+      state.radarNumberColor = radarNumberInput.value;
+      requestRender();
+      radarNumberInput.click();
+    }
+  });
+});
+radarNumberInput.addEventListener('input', () => {
+  state.radarNumberColor = radarNumberInput.value;
+  document.querySelectorAll('.segment[data-numcolor]').forEach((item) => item.classList.toggle('active', item.dataset.numcolor === 'custom'));
+  requestRender();
+});
+
+document.querySelectorAll('.segment[data-tone]').forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.classList.contains('active')) return;
+    document.querySelectorAll('.segment[data-tone]').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    state.innerMonotone = button.dataset.tone === 'mono';
+    requestRender();
+  });
+});
+
+const innerMonoInput = document.querySelector('#innerMonoColor');
+document.querySelectorAll('.segment[data-monocolor]').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.segment[data-monocolor]').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    if (button.dataset.monocolor === 'theme') {
+      state.innerMonoColor = null;
+      requestRender();
+    } else {
+      state.innerMonoColor = innerMonoInput.value;
+      requestRender();
+      innerMonoInput.click();
+    }
+  });
+});
+innerMonoInput.addEventListener('input', () => {
+  state.innerMonoColor = innerMonoInput.value;
+  document.querySelectorAll('.segment[data-monocolor]').forEach((item) => item.classList.toggle('active', item.dataset.monocolor === 'custom'));
+  requestRender();
+});
+
+document.querySelectorAll('.segment[data-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    if (button.classList.contains('active')) return;
+    document.querySelectorAll('.segment[data-filter]').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    state.innerFilter = button.dataset.filter;
+    requestRender();
+  });
+});
+
+document.querySelectorAll('.tab').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === button));
+    document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.tabPanel === button.dataset.tab));
+  });
+});
 
 document.querySelectorAll('[data-score]').forEach((input) => {
   input.addEventListener('input', () => {
@@ -606,40 +911,22 @@ document.querySelectorAll('[data-score]').forEach((input) => {
   input.addEventListener('blur', () => { input.value = clamp(Number(input.value) || 4, 1, 7).toFixed(2); });
 });
 
-document.querySelectorAll('.segment').forEach((button) => {
+document.querySelectorAll('.segment[data-mode]').forEach((button) => {
   button.addEventListener('click', async () => {
     if (button.classList.contains('active')) return;
-    document.querySelectorAll('.segment').forEach((item) => item.classList.remove('active'));
+    document.querySelectorAll('.segment[data-mode]').forEach((item) => item.classList.remove('active'));
     button.classList.add('active');
     state.mode = button.dataset.mode;
     const cutout = state.mode === 'cutout';
     dom.cutoutHint.textContent = cutout
       ? '처음 사용할 때 로컬 배경 제거 모델을 다운로드합니다. 사진은 업로드되지 않습니다.'
       : '사진 배경을 유지한 채 전체 사진에 부드러운 저투명도 효과를 적용합니다.';
-    if (state.sourceFile) await processPhoto();
-    else setStatus(cutout ? 'AI 자동 배경 제거 모드 · 사진 업로드 대기 중' : '원본 유지 모드 · 사진 업로드 대기 중');
-  });
-});
-
-const presets = {
-  mist: { opacity: 36, overlap: 68, density: 58 },
-  pollen: { opacity: 31, overlap: 76, density: 78 },
-  specimen: { opacity: 48, overlap: 51, density: 42 }
-};
-
-document.querySelectorAll('.preset').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('.preset').forEach((item) => item.classList.remove('active'));
-    button.classList.add('active');
-    state.preset = button.dataset.preset;
-    const preset = presets[state.preset];
-    [['subjectOpacity', 'subjectOpacity', preset.opacity], ['bloomOverlap', 'bloomOverlap', preset.overlap], ['stippleDensity', 'stippleDensity', preset.density]].forEach(([id, key, value]) => {
-      document.querySelector(`#${id}`).value = value;
-      document.querySelector(`#${id}Value`).value = `${value}%`;
-      state[key] = value / 100;
-    });
-    setStatus(`${button.querySelector('b').textContent} 프리셋 · 다시 렌더링했습니다`);
-    requestRender();
+    if (!state.photos.outer.file && !state.photos.inner.file) {
+      setStatus(cutout ? 'AI 자동 배경 제거 모드 · 사진 업로드 대기 중' : '원본 유지 모드 · 사진 업로드 대기 중');
+      return;
+    }
+    if (state.photos.outer.file) await processPhoto('outer');
+    if (state.photos.inner.file) await processPhoto('inner');
   });
 });
 
@@ -650,47 +937,88 @@ document.querySelectorAll('.color-chip').forEach((button) => {
 document.querySelector('#eyedropperButton').addEventListener('click', () => dom.customColor.click());
 dom.customColor.addEventListener('input', () => setTheme(dom.customColor.value, false));
 
-async function loadPhoto(file) {
+async function loadPhoto(slotName, file) {
   if (!file || !file.type.startsWith('image/')) { setStatus('PNG, JPG 또는 WebP 이미지를 선택하세요'); return; }
-  await processPhoto(file);
+  await processPhoto(slotName, file);
 }
 
-dom.photoInput.addEventListener('change', () => loadPhoto(dom.photoInput.files[0]));
-['dragenter', 'dragover'].forEach((eventName) => dom.dropzone.addEventListener(eventName, (event) => {
-  event.preventDefault(); dom.dropzone.classList.add('dragging');
-}));
-['dragleave', 'drop'].forEach((eventName) => dom.dropzone.addEventListener(eventName, (event) => {
-  event.preventDefault(); dom.dropzone.classList.remove('dragging');
-}));
-dom.dropzone.addEventListener('drop', (event) => loadPhoto(event.dataTransfer.files[0]));
+Object.entries(dom.dropzones).forEach(([slotName, zone]) => {
+  zone.input.addEventListener('change', () => loadPhoto(slotName, zone.input.files[0]));
+  ['dragenter', 'dragover'].forEach((eventName) => zone.zone.addEventListener(eventName, (event) => {
+    event.preventDefault(); zone.zone.classList.add('dragging');
+  }));
+  ['dragleave', 'drop'].forEach((eventName) => zone.zone.addEventListener(eventName, (event) => {
+    event.preventDefault(); zone.zone.classList.remove('dragging');
+  }));
+  zone.zone.addEventListener('drop', (event) => loadPhoto(slotName, event.dataTransfer.files[0]));
+});
 
+// 완전 초기화: 사진·설정·미리보기를 앱 첫 화면 상태로 되돌린다
 document.querySelector('#resetButton').addEventListener('click', () => {
+  // 진행 중인 사진 처리가 끝나도 결과를 버리도록 토큰을 올리고 슬롯을 비운다
+  state.photos.outer.token += 1;
+  state.photos.inner.token += 1;
+  state.photos = { outer: emptySlot(), inner: emptySlot() };
+  state.processing.clear();
+  dom.overlay.classList.remove('visible');
+
+  const dropzoneText = {
+    outer: ['바깥 꽃 사진 (번짐·점묘 모양)', '끌어다 놓거나 클릭하여 PNG, JPG, WebP 선택'],
+    inner: ['안쪽 꽃 사진 (중앙)', '비워두면 바깥 꽃 사진을 함께 사용']
+  };
+  Object.entries(dom.dropzones).forEach(([slotName, zone]) => {
+    zone.input.value = '';
+    zone.title.textContent = dropzoneText[slotName][0];
+    zone.meta.textContent = dropzoneText[slotName][1];
+  });
+
   document.querySelectorAll('[data-score]').forEach((input) => {
     input.value = Number(defaults[input.dataset.score]).toFixed(2);
     state.scores[input.dataset.score] = defaults[input.dataset.score];
   });
-  [['subjectOpacity', 'subjectOpacity'], ['bloomOverlap', 'bloomOverlap'], ['stippleDensity', 'stippleDensity']].forEach(([id, key]) => {
+  sliderKeys.forEach((id) => {
     document.querySelector(`#${id}`).value = defaults[id];
     document.querySelector(`#${id}Value`).value = `${defaults[id]}%`;
-    state[key] = defaults[id] / 100;
+    state[id] = defaults[id] / 100;
   });
-  state.preset = 'mist';
-  document.querySelectorAll('.preset').forEach((item) => item.classList.toggle('active', item.dataset.preset === 'mist'));
-  if (state.sourceImage) {
-    setTheme(extractTheme(state.processedImage || state.sourceImage), true);
-    requestRender(); setStatus('설정을 기본값으로 복원했습니다');
-  } else {
-    setTheme('#6651a3', true); setStatus('참고 스타일 미리보기 · 사진 업로드 대기 중');
-  }
+
+  state.mode = 'cutout';
+  document.querySelectorAll('.segment[data-mode]').forEach((item) => item.classList.toggle('active', item.dataset.mode === 'cutout'));
+  ['outerRotation', 'innerRotation'].forEach((id) => {
+    state[id] = 0;
+    document.querySelector(`#${id}`).value = 0;
+    document.querySelector(`#${id}Value`).value = '0°';
+  });
+  state.innerMonotone = false;
+  document.querySelectorAll('.segment[data-tone]').forEach((item) => item.classList.toggle('active', item.dataset.tone === 'color'));
+  state.innerMonoColor = null;
+  document.querySelectorAll('.segment[data-monocolor]').forEach((item) => item.classList.toggle('active', item.dataset.monocolor === 'theme'));
+  state.innerFilter = 'none';
+  document.querySelectorAll('.segment[data-filter]').forEach((item) => item.classList.toggle('active', item.dataset.filter === 'none'));
+  state.radarNumberColor = null;
+  document.querySelectorAll('.segment[data-numcolor]').forEach((item) => item.classList.toggle('active', item.dataset.numcolor === 'theme'));
+  state.subscales = defaultSubscales();
+  document.querySelectorAll('[data-sub]').forEach((input) => {
+    input.value = state.subscales[input.dataset.sub][input.dataset.field];
+  });
+  dom.cutoutHint.textContent = '처음 사용할 때 로컬 배경 제거 모델을 다운로드합니다. 사진은 업로드되지 않습니다.';
+
+  document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item.dataset.tab === 'outer'));
+  document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.tabPanel === 'outer'));
+
+  dom.exportButton.disabled = false;
+  setTheme('#6651a3', true);
+  renderComposite(dom.canvas, 1280);
+  setStatus('초기화 완료 · 기본 그래프 · 사진 업로드 대기 중');
 });
 
 dom.exportButton.addEventListener('click', async () => {
-  if (!state.processedImage || state.processing) return;
-  setStatus('2048 × 2048 고해상도 PNG를 생성하는 중…');
+  if (state.processing.size > 0) return;
+  setStatus(`${EXPORT_SIZE} × ${EXPORT_SIZE} 고해상도 PNG를 생성하는 중…`);
   dom.exportButton.disabled = true;
   await new Promise((resolve) => setTimeout(resolve, 40));
   const exportCanvas = document.createElement('canvas');
-  renderComposite(exportCanvas, 2048);
+  renderComposite(exportCanvas, EXPORT_SIZE);
   exportCanvas.toBlob((blob) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -712,4 +1040,8 @@ document.querySelectorAll('.icon-button').forEach((button) => {
     document.querySelector('#artboard').style.width = fullSize ? 'min(760px, calc(100vh - 196px))' : '';
   });
 });
+
+// 사진이 없어도 그리드와 HEXACO 육각형은 기본 이미지로 그려 둔다
+dom.canvas.classList.add('visible');
+renderComposite(dom.canvas, 1280);
 

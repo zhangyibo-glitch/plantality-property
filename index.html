@@ -4,14 +4,14 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>식물 성격 이미지 생성기</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=082715" />
 </head>
 <body>
   <div class="app-shell">
     <header class="topbar">
       <div class="title-block">
         <span class="eyebrow">BOTANICAL PORTRAIT STUDIO</span>
-        <h1>식물 성격 이미지 생성기 <span>데스크톱 버전</span></h1>
+        <h1>식물 성격 이미지 생성기 <span>데스크톱 · v0827.15</span></h1>
       </div>
       <div class="topbar-actions">
         <span class="local-badge"><i></i>사진은 이 컴퓨터에서만 처리됩니다</span>
@@ -26,15 +26,22 @@
           <span class="step">01</span>
           <div>
             <h2>식물 사진</h2>
-            <p>실제 식물 사진을 업로드하고 배경 처리 방식을 선택하세요.</p>
+            <p>바깥 꽃(번짐·점묘)과 안쪽 꽃(중앙 사진)을 각각 업로드하세요. 한 장만 올리면 둘 다에 함께 쓰입니다.</p>
           </div>
         </div>
 
-        <label class="dropzone" id="dropzone" for="photoInput">
-          <input id="photoInput" type="file" accept="image/png,image/jpeg,image/webp" />
+        <label class="dropzone" id="dropzoneOuter" for="photoInputOuter">
+          <input id="photoInputOuter" type="file" accept="image/png,image/jpeg,image/webp" />
           <span class="upload-mark">＋</span>
-          <strong id="dropzoneTitle">사진을 여기에 끌어다 놓으세요</strong>
-          <span id="dropzoneMeta">또는 클릭하여 PNG, JPG, WebP 선택</span>
+          <strong id="dropzoneOuterTitle">바깥 꽃 사진 (번짐·점묘 모양)</strong>
+          <span id="dropzoneOuterMeta">끌어다 놓거나 클릭하여 PNG, JPG, WebP 선택</span>
+        </label>
+
+        <label class="dropzone" id="dropzoneInner" for="photoInputInner">
+          <input id="photoInputInner" type="file" accept="image/png,image/jpeg,image/webp" />
+          <span class="upload-mark">＋</span>
+          <strong id="dropzoneInnerTitle">안쪽 꽃 사진 (중앙)</strong>
+          <span id="dropzoneInnerMeta">비워두면 바깥 꽃 사진을 함께 사용</span>
         </label>
 
         <div class="field-group compact">
@@ -70,7 +77,7 @@
         <div class="stage-toolbar">
           <div>
             <span class="stage-title">실시간 미리보기</span>
-            <span class="stage-meta">정사각형 · 2048 × 2048 px</span>
+            <span class="stage-meta">정사각형 · 2560 × 2560 px</span>
           </div>
           <div class="view-actions">
             <button class="icon-button active" type="button" title="창에 맞추기">FIT</button>
@@ -80,7 +87,6 @@
 
         <div class="canvas-well">
           <div class="artboard" id="artboard">
-            <img id="referencePreview" src="assets/rosemary-reference.jpg" alt="식물 성격 이미지 참고 미리보기" />
             <canvas id="renderCanvas" width="1280" height="1280" aria-label="생성된 식물 성격 이미지"></canvas>
             <div class="processing-overlay" id="processingOverlay">
               <span></span>
@@ -91,7 +97,7 @@
         </div>
 
         <div class="stage-footer">
-          <span id="stageStatus">참고 스타일 미리보기 · 사진 업로드 대기 중</span>
+          <span id="stageStatus">기본 그래프 · 사진 업로드 대기 중</span>
           <span>확대/축소 54%</span>
         </div>
       </section>
@@ -101,49 +107,199 @@
           <span class="step">03</span>
           <div>
             <h2>합성 방식</h2>
-            <p>식물의 투명도와 번짐 색상의 겹침 정도를 조절하세요.</p>
+            <p>레이어별 탭에서 두 사진과 HEXACO 그래프를 각각 조절하세요.</p>
           </div>
         </div>
 
-        <div class="control-block">
-          <div class="control-label"><span>식물 투명도</span><output id="subjectOpacityValue">36%</output></div>
-          <input id="subjectOpacity" type="range" min="12" max="72" value="36" />
-          <div class="range-labels"><span>옅게</span><span>선명하게</span></div>
+        <div class="tab-bar" role="tablist" aria-label="합성 레이어 선택">
+          <button class="tab active" data-tab="outer" type="button">이미지 1<small>바깥 꽃</small></button>
+          <button class="tab" data-tab="inner" type="button">이미지 2<small>안쪽 꽃</small></button>
+          <button class="tab" data-tab="radar" type="button">HEXACO<small>그래프</small></button>
         </div>
 
-        <div class="control-block">
-          <div class="control-label"><span>번짐 색상 겹침</span><output id="bloomOverlapValue">68%</output></div>
-          <input id="bloomOverlap" type="range" min="20" max="95" value="68" />
-          <div class="range-labels"><span>분리</span><span>융합</span></div>
+        <div class="tab-panel active" data-tab-panel="outer">
+          <p class="field-hint">윤곽(shape)을 추출해 가장자리를 따라 점을 뿌립니다. 원본 이미지 투명도를 0으로 두면 점묘만 남습니다.</p>
+
+          <div class="control-block">
+            <div class="control-label"><span>원본 이미지 투명도</span><output id="originalOpacityValue">35%</output></div>
+            <input id="originalOpacity" type="range" min="0" max="82" value="35" />
+            <div class="range-labels"><span>숨김 (0%)</span><span>선명하게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>실루엣 크기</span><output id="outerScaleValue">82%</output></div>
+            <input id="outerScale" type="range" min="40" max="100" value="82" />
+            <div class="range-labels"><span>작게</span><span>크게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>회전</span><output id="outerRotationValue">0°</output></div>
+            <input id="outerRotation" type="range" min="0" max="360" value="0" />
+            <div class="range-labels"><span>0°</span><span>360°</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>점 밀도</span><output id="stippleDensityValue">58%</output></div>
+            <input id="stippleDensity" type="range" min="20" max="100" value="58" />
+            <div class="range-labels"><span>성기게</span><span>촘촘하게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>퍼짐</span><output id="bloomSpreadValue">68%</output></div>
+            <input id="bloomSpread" type="range" min="10" max="95" value="68" />
+            <div class="range-labels"><span>윤곽에 밀착</span><span>넓게 퍼짐</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>번짐</span><output id="bloomSoftnessValue">45%</output></div>
+            <input id="bloomSoftness" type="range" min="0" max="100" value="45" />
+            <div class="range-labels"><span>작고 또렷하게</span><span>크고 옅게</span></div>
+          </div>
+
+          <div class="field-group color-group">
+            <div class="control-label"><span>테마 색상</span><span class="auto-pill">자동 추출</span></div>
+            <div class="palette-row">
+              <button class="color-chip active" style="--chip:#6651a3" aria-label="보라색"></button>
+              <button class="color-chip" style="--chip:#668a3b" aria-label="초록색"></button>
+              <button class="color-chip" style="--chip:#bb4030" aria-label="빨간색"></button>
+              <button class="color-chip" style="--chip:#3e6685" aria-label="파란색"></button>
+              <button class="eyedropper" id="eyedropperButton" type="button">색상 추출</button>
+              <input id="customColor" type="color" value="#6651a3" aria-label="사용자 지정 테마 색상" />
+            </div>
+          </div>
         </div>
 
-        <div class="control-block">
-          <div class="control-label"><span>점묘 밀도</span><output id="stippleDensityValue">58%</output></div>
-          <input id="stippleDensity" type="range" min="20" max="90" value="58" />
-          <div class="range-labels"><span>성기게</span><span>촘촘하게</span></div>
+        <div class="tab-panel" data-tab-panel="inner">
+          <div class="control-block">
+            <div class="control-label"><span>사진 투명도</span><output id="innerOpacityValue">45%</output></div>
+            <input id="innerOpacity" type="range" min="0" max="82" value="45" />
+            <div class="range-labels"><span>숨김 (0%)</span><span>선명하게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>사진 크기</span><output id="innerScaleValue">50%</output></div>
+            <input id="innerScale" type="range" min="25" max="80" value="50" />
+            <div class="range-labels"><span>작게</span><span>크게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>회전</span><output id="innerRotationValue">0°</output></div>
+            <input id="innerRotation" type="range" min="0" max="360" value="0" />
+            <div class="range-labels"><span>0°</span><span>360°</span></div>
+          </div>
+
+          <div class="field-group compact">
+            <span class="field-label">색조</span>
+            <div class="segmented" role="group" aria-label="이미지 2 색조">
+              <button class="segment active" data-tone="color" type="button">컬러</button>
+              <button class="segment" data-tone="mono" type="button">모노톤</button>
+            </div>
+          </div>
+
+          <div class="field-group compact">
+            <span class="field-label">모노톤 색상</span>
+            <div class="segmented" role="group" aria-label="모노톤 색상">
+              <button class="segment active" data-monocolor="theme" type="button">테마 색상</button>
+              <button class="segment" data-monocolor="custom" type="button">직접 선택</button>
+            </div>
+            <input id="innerMonoColor" type="color" value="#6651a3" aria-label="모노톤 색상 직접 선택" />
+          </div>
+
+          <div class="field-group compact">
+            <span class="field-label">질감 필터</span>
+            <div class="segmented three" role="group" aria-label="질감 필터">
+              <button class="segment active" data-filter="none" type="button">없음</button>
+              <button class="segment" data-filter="stipple" type="button">점묘</button>
+              <button class="segment" data-filter="grain" type="button">거친 입자</button>
+            </div>
+            <p class="field-hint">점묘는 바깥 번짐과 같은 점으로 사진을 다시 그려 질감을 맞춥니다. 점 크기는 이미지 1 탭의 "번짐"을 따릅니다.</p>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>필터 강도</span><output id="innerFilterAmountValue">60%</output></div>
+            <input id="innerFilterAmount" type="range" min="10" max="100" value="60" />
+            <div class="range-labels"><span>약하게</span><span>강하게</span></div>
+          </div>
+
+          <p class="field-hint">안쪽 꽃 사진을 따로 올렸을 때만 중앙에 그려집니다. 원본(바깥) 이미지 표시는 이미지 1 탭의 "원본 이미지 투명도"로 조절하세요.</p>
+        </div>
+
+        <div class="tab-panel" data-tab-panel="radar">
+          <div class="control-block">
+            <div class="control-label"><span>그래프 크기</span><output id="radarScaleValue">100%</output></div>
+            <input id="radarScale" type="range" min="60" max="105" value="100" />
+            <div class="range-labels"><span>작게</span><span>크게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>선 굵기</span><output id="radarWidthValue">100%</output></div>
+            <input id="radarWidth" type="range" min="40" max="180" value="100" />
+            <div class="range-labels"><span>가늘게</span><span>굵게</span></div>
+          </div>
+
+          <div class="control-block">
+            <div class="control-label"><span>영역 채움</span><output id="radarFillValue">10%</output></div>
+            <input id="radarFill" type="range" min="0" max="30" value="10" />
+            <div class="range-labels"><span>투명</span><span>진하게</span></div>
+          </div>
+
+          <div class="field-group">
+            <span class="field-label">Subscale 라벨</span>
+            <div class="subscale-list">
+              <div class="subscale-head"><span></span><span>Subscale</span><span>high</span><span>low</span></div>
+              <div class="subscale-row"><b>H</b>
+                <input data-sub="h" data-field="name" value="Fairness/Sincerity" />
+                <input data-sub="h" data-field="high" value="sincere" />
+                <input data-sub="h" data-field="low" value="deceitful" />
+              </div>
+              <div class="subscale-row"><b>E</b>
+                <input data-sub="e" data-field="name" value="Dependence" />
+                <input data-sub="e" data-field="high" value="dependent" />
+                <input data-sub="e" data-field="low" value="independent" />
+              </div>
+              <div class="subscale-row"><b>X</b>
+                <input data-sub="x" data-field="name" value="Social Boldness" />
+                <input data-sub="x" data-field="high" value="proactive" />
+                <input data-sub="x" data-field="low" value="reserved" />
+              </div>
+              <div class="subscale-row"><b>A</b>
+                <input data-sub="a" data-field="name" value="Flexibility" />
+                <input data-sub="a" data-field="high" value="accommodating" />
+                <input data-sub="a" data-field="low" value="stubborn" />
+              </div>
+              <div class="subscale-row"><b>C</b>
+                <input data-sub="c" data-field="name" value="Organization" />
+                <input data-sub="c" data-field="high" value="organized" />
+                <input data-sub="c" data-field="low" value="disorganized" />
+              </div>
+              <div class="subscale-row"><b>O</b>
+                <input data-sub="o" data-field="name" value="Creativity" />
+                <input data-sub="o" data-field="high" value="imaginative" />
+                <input data-sub="o" data-field="low" value="conventional" />
+              </div>
+            </div>
+            <p class="field-hint">그래프에는 "Subscale: high(단어)" 또는 "Subscale: low(단어)" 형식으로 표시됩니다. 점수 4.00 이상이면 high, 미만이면 low.</p>
+          </div>
+
+          <div class="field-group compact">
+            <span class="field-label">숫자 색상</span>
+            <div class="segmented" role="group" aria-label="숫자 색상">
+              <button class="segment active" data-numcolor="theme" type="button">테마 색상</button>
+              <button class="segment" data-numcolor="custom" type="button">직접 선택</button>
+            </div>
+            <input id="radarNumberColor" type="color" value="#6651a3" aria-label="숫자 색상 직접 선택" />
+          </div>
+
+          <p class="field-hint">점수 자체는 왼쪽 패널의 HEXACO 점수 입력란에서 바꿉니다.</p>
         </div>
 
         <div class="divider"></div>
 
-        <div class="field-group">
-          <span class="field-label">렌더링 프리셋</span>
-          <div class="preset-grid">
-            <button class="preset active" data-preset="mist" type="button"><i class="swatch mist"></i><span><b>부드러운 안개</b><small>낮은 대비로 부드럽게</small></span></button>
-            <button class="preset" data-preset="pollen" type="button"><i class="swatch pollen"></i><span><b>꽃가루 점묘</b><small>입자를 더 뚜렷하게</small></span></button>
-            <button class="preset" data-preset="specimen" type="button"><i class="swatch specimen"></i><span><b>식물 표본</b><small>윤곽을 더 선명하게</small></span></button>
-          </div>
-        </div>
-
-        <div class="field-group color-group">
-          <div class="control-label"><span>테마 색상</span><span class="auto-pill">자동 추출</span></div>
-          <div class="palette-row">
-            <button class="color-chip active" style="--chip:#6651a3" aria-label="보라색"></button>
-            <button class="color-chip" style="--chip:#668a3b" aria-label="초록색"></button>
-            <button class="color-chip" style="--chip:#bb4030" aria-label="빨간색"></button>
-            <button class="color-chip" style="--chip:#3e6685" aria-label="파란색"></button>
-            <button class="eyedropper" id="eyedropperButton" type="button">색상 추출</button>
-            <input id="customColor" type="color" value="#6651a3" aria-label="사용자 지정 테마 색상" />
-          </div>
+        <div class="control-block">
+          <div class="control-label"><span>캔버스 여백</span><output id="canvasMarginValue">10%</output></div>
+          <input id="canvasMargin" type="range" min="0" max="25" value="10" />
+          <div class="range-labels"><span>꽉 차게</span><span>넉넉하게</span></div>
+          <p class="field-hint">사진과 그래프를 안쪽으로 물려 점이 흩어질 자리를 만듭니다. 점 구름 가장자리가 각지게 잘리면 여백을 늘리세요.</p>
         </div>
 
         <div class="assumption-note">
@@ -153,7 +309,7 @@
       </aside>
     </main>
   </div>
-  <script src="app.js"></script>
+  <script src="app.js?v=082715"></script>
 </body>
 </html>
 
